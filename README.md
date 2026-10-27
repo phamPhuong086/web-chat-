@@ -202,6 +202,8 @@ const socket = io("http://localhost:3001", {
 
 ## 6. Hướng dẫn cài đặt & Khởi chạy (Getting Started)
 
+> 💡 **Xem chi tiết từng bước:** Đọc file [CLONE_GUIDE.md](./CLONE_GUIDE.md) để xem hướng dẫn clone, tạo file `.env`, quy trình nhánh Git và cách xử lý lỗi thường gặp.
+
 ### 1. Khởi chạy Backend (`server`)
 ```bash
 cd server
