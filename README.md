@@ -1,11 +1,11 @@
-# 🚀 Realtime Chat Application - Starter Template
+#  Realtime Chat Application - Starter Template
 
 Dự án ứng dụng nhắn tin và gọi thoại/video thời gian thực (Realtime Chat & Call Web App).
 Bộ khung này được thiết kế theo kiến trúc **Module hóa (Feature-based)** để 3 thành viên (**A, B, C**) phát triển độc lập song song mà **không bị xung đột code (Git Conflict)**.
 
 ---
 
-## 📌 1. Thống số kỹ thuật & Cổng mặc định (Default Ports & Tech Stack)
+##  1. Thống số kỹ thuật & Cổng mặc định (Default Ports & Tech Stack)
 
 | Thành phần | Công nghệ | Cổng mặc định (Port) | Ghi chú |
 | :--- | :--- | :--- | :--- |
@@ -15,9 +15,9 @@ Bộ khung này được thiết kế theo kiến trúc **Module hóa (Feature-b
 
 ---
 
-## 👥 2. Phân công công việc (Task Assignment)
+##  2. Phân công công việc (Task Assignment)
 
-### 🧑‍💻 Thành viên A (Trưởng nhóm / Nền tảng & Quản trị người dùng)
+###  Thành viên A 
 * **Khung & Hạ tầng**: Khởi tạo cấu trúc thư mục, kết nối MongoDB, cấu hình JWT + Bcrypt, Middleware xác thực (`auth.js`).
 * **Xác thực (Auth)**: API & UI Đăng ký, Đăng nhập, Đăng xuất, Lưu trữ Token.
 * **Hồ sơ cá nhân (Profile)**: API & UI Cập nhật avatar, ngày sinh, sở thích, tiểu sử, đổi mật khẩu.
@@ -25,7 +25,7 @@ Bộ khung này được thiết kế theo kiến trúc **Module hóa (Feature-b
 * **Hội thoại & Nhóm (Rooms)**: API & UI Tạo phòng chat 1-1, tạo nhóm chat; đổi tên, ảnh, mô tả nhóm; thêm/xóa thành viên.
 * **Cơ sở dữ liệu & E2EE Support**: Thiết kế Model `User`, `Room`, `FriendRequest`. Thêm trường `publicKey` trong `User` và cung cấp API lưu/lấy `publicKey` phục vụ cho E2EE của B.
 
-### 🧑‍💻 Thành viên B (Nhắn tin thời gian thực & Bảo mật E2EE)
+###  Thành viên B 
 * **Giao diện Chat**: Danh sách tin nhắn (`MessageList`), khung soạn thảo (`MessageInput`), đính kèm ảnh, emoji picker.
 * **Realtime Socket**: Xử lý event `send_message`, `receive_message`, `edit_message`, `delete_message`, `react_message`.
 * **Lưu trữ & Lịch sử**: Thiết kế Model `Message`, lưu tin nhắn vào MongoDB, tải 100 tin nhắn gần nhất khi vào phòng (`load_history`).
@@ -35,7 +35,7 @@ Bộ khung này được thiết kế theo kiến trúc **Module hóa (Feature-b
   * Phối hợp với A: Gọi API của A để tải Public Key của đối phương và cập nhật Public Key của mình lên Server.
   * Mã hóa tin nhắn trước khi emit qua Socket, giải mã khi nhận tin nhắn. Lưu Private Key an toàn tại `localStorage` hoặc `IndexedDB` của Client.
 
-### 🧑‍💻 Thành viên C (Gọi thoại/Video Call WebRTC & Tính năng mở rộng)
+###  Thành viên C 
 * **Giao diện Cuộc gọi**: Overlay hiển thị cuộc gọi đến (`CallIncomingModal`), màn hình video call (`CallOverlay`), nút bật/tắt mic/camera, nút kết thúc cuộc gọi.
 * **WebRTC Signaling qua Socket.IO**: Xử lý các event `call_offer`, `incoming_call`, `call_answer`, `call_answered`, `ice_candidate`, `call_rejected`, `end_call`.
 * **Quản lý quyền & Thiết bị**: Xin quyền truy cập Camera/Microphone, xử lý khi người dùng từ chối quyền.
@@ -45,7 +45,7 @@ Bộ khung này được thiết kế theo kiến trúc **Module hóa (Feature-b
 
 ---
 
-## 📁 3. Cấu trúc thư mục Module hóa (Project Structure)
+##  3. Cấu trúc thư mục Module hóa (Project Structure)
 
 ```text
 chat-app-starter/
@@ -109,7 +109,7 @@ chat-app-starter/
 
 ---
 
-## 📡 4. Thống nhất danh mục REST API (API Contracts)
+##  4. Thống nhất danh mục REST API (API Contracts)
 
 > **Lưu ý**: Tất cả các API dưới đây (trừ `/api/auth/*`) đều bắt buộc gửi kèm header:
 > `Authorization: Bearer <token>`
@@ -158,7 +158,7 @@ chat-app-starter/
 
 ---
 
-## ⚡ 5. Thống nhất danh mục Socket.IO Events (Socket Contracts)
+##  5. Thống nhất danh mục Socket.IO Events (Socket Contracts)
 
 Khi Client kết nối Socket, **bắt buộc** truyền token qua handshake:
 ```javascript
@@ -200,7 +200,7 @@ const socket = io("http://localhost:3001", {
 
 ---
 
-## 🛠 6. Hướng dẫn cài đặt & Khởi chạy (Getting Started)
+## 6. Hướng dẫn cài đặt & Khởi chạy (Getting Started)
 
 ### 1. Khởi chạy Backend (`server`)
 ```bash
@@ -227,7 +227,7 @@ npm run dev
 
 ---
 
-## 🌿 7. Quy tắc làm việc qua Git (Git Workflow)
+##  7. Quy tắc làm việc qua Git (Git Workflow)
 
 1. **Nhánh chính**:
    * `main`: Chỉ chứa sản phẩm ổn định, không commit trực tiếp.
