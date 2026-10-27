@@ -1,22 +1,20 @@
-# 📖 Hướng Dẫn Clone & Khởi Chạy Dự Án (Dành Cho Thành Viên Nhóm)
-
+#  Hướng Dẫn Clone & Khởi Chạy Dự Án 
 Tài liệu này hướng dẫn chi tiết từng bước cho các thành viên trong nhóm (**A, B, C**) sau khi clone mã nguồn từ GitHub về máy tính cá nhân để có thể cài đặt và chạy ứng dụng mà không gặp lỗi.
 
 ---
 
-## 🛠 1. Yêu cầu môi trường trước khi bắt đầu (Prerequisites)
-
+## 🛠 1. Yêu cầu môi trường trước khi bắt đầu 
 Trước khi thực hiện các lệnh bên dưới, hãy đảm bảo máy tính của bạn đã cài đặt:
 
-1. **Git**: [Tải tại đây](https://git-scm.com/downloads) (Kiểm tra bằng lệnh: `git --version`)
+1. **Git**
 2. **Node.js** (Khuyên dùng bản LTS từ `v18.x` hoặc `v20.x` trở lên): [Tải tại đây](https://nodejs.org/) (Kiểm tra bằng: `node -v` và `npm -v`)
 3. **MongoDB**:
    * **Cách 1 (Khuyên dùng)**: Cài đặt **MongoDB Community Server** chạy trên máy local tại cổng `27017`.
    * **Cách 2**: Sử dụng đường dẫn kết nối đám mây **MongoDB Atlas** (nếu không cài MongoDB local).
-
+(Chú ý: compass là cái dùng hiển thị từ database, cần cài đặt server nếu dùng)
 ---
 
-## 🚀 2. Các bước thiết lập dự án từ A - Z
+## 2. Các bước thiết lập dự án từ A - Z
 
 ### Bước 1: Clone kho chứa (Repository) về máy
 Mở Terminal / PowerShell và gõ:
@@ -68,9 +66,9 @@ Mở **Cửa sổ Terminal số 1**:
    ```
    *Khi thấy thông báo sau là Server đã chạy thành công:*
    ```text
-   ✅ [Database] Đã kết nối MongoDB thành công: mongodb://localhost:27017/chat_app
-   🚀 [Server] Đang chạy tại: http://localhost:3001
-   📡 [Socket] Đang lắng nghe kết nối từ: http://localhost:5173
+    [Database] Đã kết nối MongoDB thành công: mongodb://localhost:27017/chat_app
+    [Server] Đang chạy tại: http://localhost:3001
+    [Socket] Đang lắng nghe kết nối từ: http://localhost:5173
    ```
 
 ---
@@ -118,7 +116,7 @@ Mở **Cửa sổ Terminal số 2** (giữ nguyên Terminal 1 đang chạy serve
 
 ---
 
-## 🌿 3. Quy trình làm việc nhóm qua Git (Tránh Conflict)
+## 3. Quy trình làm việc nhóm qua Git (Tránh Conflict)
 
 Tất cả các thành viên khi bắt tay vào làm việc cần tuân theo đúng 5 bước sau:
 
@@ -160,7 +158,7 @@ Tất cả các thành viên khi bắt tay vào làm việc cần tuân theo đ�
 
 ---
 
-## ❓ 4. Các lỗi thường gặp & Cách xử lý nhanh
+## 4. Các lỗi thường gặp & Cách xử lý nhanh
 
 | Lỗi | Nguyên nhân | Cách khắc phục |
 | :--- | :--- | :--- |
