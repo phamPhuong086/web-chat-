@@ -52,18 +52,75 @@ export default function useWebRTC(socket, currentUserId) {
 
   // Theo doi trang thai cuoc goi
   const callStatusRef = useRef("idle");
+  
+  // Đánh dấu phiên cuộc gọi hiện tại
+  const sessionRef = useRef(0);
+  
+  // [C] Dọn dẹp tài nguyên sau khi cuộc gọi kết thúc
+  const cleanupCall = useCallback(() => {
+
+    // 1. Vô hiệu hóa các thao tác của phiên cuộc gọi cũ
+    sessionRef.current += 1;
+
+    // 2. Hủy bộ đếm 30 giây
+    clearTimeout(callTimeoutRef.current);
+    callTimeoutRef.current = null;
+
+    // 3. Dừng camera và microphone
+    if (localStreamRef.current) {
+      localStreamRef.current.getTracks().forEach((track) => {
+        track.stop();
+      });
+      localStreamRef.current = null;
+    }
+
+    // 4. Đóng kết nối WebRTC
+    if (pcRef.current) {
+      pcRef.current.onicecandidate = null;
+      pcRef.current.ontrack = null;
+      pcRef.current.onconnectionstatechange = null;
+
+      pcRef.current.close();
+      pcRef.current = null;
+    }
+
+    // 5. Xóa thông tin kết nối
+    targetIdRef.current = null;
+    pendingIceRef.current = [];
+    callStatusRef.current = "idle";
+
+    // 6. Khôi phục trạng thái giao diện
+    setCallActive(false);
+    setIncomingCall(null);
+    setLocalStream(null);
+    setRemoteStream(null);
+    setIsMuted(false);
+    setIsVideoOff(false);
+
+  }, []);
 
   // Xin quyền truy cập Camera và Microphone
   const getMedia = useCallback(async (type = "video") => {
     try {
+      
+      // Ghi nhận phiên cuộc gọi đang xin quyền thiết bị
+      const session = sessionRef.current;
+
       const stream = await navigator.mediaDevices.getUserMedia({
         audio: true,
         video: type === "video",
       });
 
-      // Lưu luồng âm thanh và hình ảnh
+      // Nếu cuộc gọi đã bị hủy trong lúc xin quyền
+      if (session !== sessionRef.current) {
+        stream.getTracks().forEach((track) => track.stop());
+        return null;
+      }
+
+      // Chỉ lưu stream khi phiên cuộc gọi còn hợp lệ
       localStreamRef.current = stream;
       setLocalStream(stream);
+
 
       // Cập nhật trạng thái thiết bị
       setIsMuted(false);
@@ -108,21 +165,47 @@ export default function useWebRTC(socket, currentUserId) {
     };
 
     // Theo dõi trạng thái kết nối
+    
+    // [C] Theo dõi trạng thái kết nối WebRTC
     pc.onconnectionstatechange = () => {
-      console.log("WebRTC:", pc.connectionState);
+      const state = pc.connectionState;
 
-      if (pc.connectionState === "connected") {
+      console.log("Trạng thái WebRTC:", state);
+
+      // Bỏ qua sự kiện của kết nối cũ
+      if (pcRef.current !== pc) return;
+
+      // Hai thiết bị đã kết nối thành công
+      if (state === "connected") {
         setCallActive(true);
         callStatusRef.current = "active";
+
+        clearTimeout(callTimeoutRef.current);
+        callTimeoutRef.current = null;
       }
 
-      if (pc.connectionState === "failed") {
+      // Kết nối thất bại
+      if (state === "failed") {
         console.error("Kết nối WebRTC thất bại");
+
+        const targetId = targetIdRef.current;
+
+        if (socket && targetId) {
+          socket.emit("end_call", { targetId });
+        }
+
+        cleanupCall();
+      }
+
+      // Mất kết nối tạm thời
+      if (state === "disconnected") {
+        console.warn("Kết nối WebRTC bị gián đoạn");
       }
     };
 
+
     return pc;
-  }, [socket]);
+  }, [socket, cleanupCall]);
 
 
   // Bắt đầu cuộc gọi thoại hoặc video
@@ -149,9 +232,18 @@ export default function useWebRTC(socket, currentUserId) {
     targetIdRef.current = targetId;
     setCallType(type);
 
+    // Tạo mã phiên cho cuộc gọi mới
+    const session = ++sessionRef.current;
+
     try {
       // 1. Xin quyền camera/microphone
       const stream = await getMedia(type);
+      
+      // Dừng nếu không lấy được stream hoặc phiên đã bị hủy
+      if (!stream || session !== sessionRef.current) {
+        stream?.getTracks().forEach((track) => track.stop());
+        return;
+      }
 
       // 2. Tạo kết nối WebRTC
       const pc = createPeerConnection(targetId);
@@ -164,8 +256,15 @@ export default function useWebRTC(socket, currentUserId) {
       // 4. Tạo WebRTC Offer
       const offer = await pc.createOffer();
 
+      // Kiểm tra cuộc gọi còn hợp lệ không
+      if (session !== sessionRef.current) return;
+
+
       // 5. Lưu Offer vào kết nối
       await pc.setLocalDescription(offer);
+
+      // Không gửi Offer nếu cuộc gọi đã bị hủy
+      if (session !== sessionRef.current) return;
 
       // 6. Gửi Offer cho người nhận qua Socket.IO
       socket.emit("call_offer", {
@@ -176,204 +275,35 @@ export default function useWebRTC(socket, currentUserId) {
 
       console.log("Đã gửi yêu cầu gọi đến:", targetId);
 
-      // 7. Tự hủy nếu không có phản hồi sau 30 giây
+      
+      // Tự hủy cuộc gọi nếu không được trả lời sau 30 giây
       callTimeoutRef.current = setTimeout(() => {
-        if (callStatusRef.current === "calling") {
+        if (
+          session === sessionRef.current &&
+          callStatusRef.current === "calling"
+        ) {
           console.log("Cuộc gọi không được trả lời sau 30 giây");
 
           socket.emit("end_call", { targetId });
 
-          localStreamRef.current?.getTracks().forEach(
-            (track) => track.stop()
-          );
-
-          pcRef.current?.close();
-          pcRef.current = null;
-          localStreamRef.current = null;
-          targetIdRef.current = null;
-          callStatusRef.current = "idle";
-
-          setLocalStream(null);
-          setRemoteStream(null);
-          setCallActive(false);
+          cleanupCall();
         }
       }, 30000);
 
+
+    
     } catch (error) {
       console.error("Không thể bắt đầu cuộc gọi:", error);
 
-      localStreamRef.current?.getTracks().forEach(
-        (track) => track.stop()
-      );
-
-      pcRef.current?.close();
-      pcRef.current = null;
-      localStreamRef.current = null;
-      targetIdRef.current = null;
-      callStatusRef.current = "idle";
-
-      setLocalStream(null);
-      setCallActive(false);
-    }
-  }, [socket, currentUserId, getMedia, createPeerConnection]);
-
-
-  
-  // [C] Chấp nhận cuộc gọi WebRTC
-  const acceptCall = useCallback(async () => {
-    if (!incomingCall || !socket) return;
-
-    try {
-      // 1. Lấy thông tin người gọi
-      const { callerId, offer, callType: type } = incomingCall;
-
-      callStatusRef.current = "connecting";
-      
-      clearTimeout(callTimeoutRef.current);
-      callTimeoutRef.current = null;
-
-      // 2. Xin quyền camera/microphone
-      const stream = await getMedia(type);
-
-      // 3. Tạo kết nối WebRTC
-      const pc = createPeerConnection(callerId);
-
-      // 4. Thêm các track âm thanh/video
-      stream.getTracks().forEach((track) => {
-        pc.addTrack(track, stream);
-      });
-
-      // 5. Nhận và lưu Offer từ người gọi
-      await pc.setRemoteDescription(
-        new RTCSessionDescription(offer)
-      );
-
-      await flushIceCandidates();
-
-      // 6. Tạo Answer để phản hồi
-      const answer = await pc.createAnswer();
-
-      // 7. Lưu Answer vào kết nối
-      await pc.setLocalDescription(answer);
-
-      // 8. Gửi Answer về người gọi
-      socket.emit("call_answer", {
-        callerId,
-        answer: pc.localDescription.toJSON(),
-      });
-
-      // 9. Cập nhật giao diện
-      setIncomingCall(null);
-      setCallActive(true);
-
-      console.log("Đã chấp nhận cuộc gọi từ:", callerId);
-
-    } catch (error) {
-      console.error("Lỗi chấp nhận cuộc gọi:", error);
-      // Sẽ bổ sung dọn dẹp kết nối ở bước xử lý endCall
-    }
-  }, [incomingCall, socket, getMedia, createPeerConnection, flushIceCandidates]);
-
-
-  
-  // [C] Từ chối cuộc gọi đến
-  const rejectCall = useCallback(() => {
-
-    // 1. Kiểm tra thông tin cuộc gọi đến
-    if (!incomingCall) return;
-
-    // 2. Thông báo từ chối cho người gọi
-    if (socket) {
-      socket.emit("call_rejected", {
-        callerId: incomingCall.callerId,
-      });
+      // Chỉ dọn dẹp nếu đây vẫn là phiên cuộc gọi hiện tại
+      if (session === sessionRef.current) {
+        cleanupCall();
+      }
     }
 
-    // 3. Hủy bộ đếm thời gian
-    clearTimeout(callTimeoutRef.current);
-    callTimeoutRef.current = null;
+  }, [socket, currentUserId, getMedia, createPeerConnection, cleanupCall]);
 
-    // 4. Đóng kết nối WebRTC nếu đã được tạo
-    if (pcRef.current) {
-      pcRef.current.close();
-      pcRef.current = null;
-    }
-
-    // 5. Dừng camera và microphone nếu đang sử dụng
-    if (localStreamRef.current) {
-      localStreamRef.current.getTracks().forEach((track) => {
-        track.stop();
-      });
-      localStreamRef.current = null;
-    }
-
-    // 6. Xóa thông tin cuộc gọi
-    targetIdRef.current = null;
-    pendingIceRef.current = [];
-    callStatusRef.current = "idle";
-
-    // 7. Cập nhật giao diện
-    setIncomingCall(null);
-    setCallActive(false);
-    setLocalStream(null);
-    setRemoteStream(null);
-    setIsMuted(false);
-    setIsVideoOff(false);
-
-    console.log("Đã từ chối cuộc gọi");
-
-  }, [incomingCall, socket]);
-
-
-  
-  // [C] Kết thúc cuộc gọi WebRTC
-  const endCall = useCallback(() => {
-
-    // 1. Lấy ID người đang gọi cùng
-    const targetId = targetIdRef.current;
-
-    // 2. Thông báo cho đối phương
-    if (socket && targetId) {
-      socket.emit("end_call", { targetId });
-    }
-
-    // 3. Xóa bộ đếm thời gian 30 giây
-    clearTimeout(callTimeoutRef.current);
-    callTimeoutRef.current = null;
-
-    // 4. Dừng camera và microphone
-    if (localStreamRef.current) {
-      localStreamRef.current.getTracks().forEach((track) => {
-        track.stop();
-      });
-      localStreamRef.current = null;
-    }
-
-    // 5. Đóng kết nối WebRTC
-    if (pcRef.current) {
-      pcRef.current.close();
-      pcRef.current = null;
-    }
-
-    // 6. Xóa các thông tin cuộc gọi
-    targetIdRef.current = null;
-    pendingIceRef.current = [];
-    callStatusRef.current = "idle";
-
-    // 7. Đưa giao diện về trạng thái ban đầu
-    setCallActive(false);
-    setIncomingCall(null);
-    setLocalStream(null);
-    setRemoteStream(null);
-    setIsMuted(false);
-    setIsVideoOff(false);
-
-    console.log("Đã kết thúc cuộc gọi WebRTC");
-
-  }, [socket]);
-
-
-  // [C] Nhận ICE Candidate từ đối phương
+// [C] Nhận ICE Candidate từ đối phương
   const addRemoteCandidate = useCallback(async (candidate) => {
     if (!candidate) return;
 
@@ -404,6 +334,141 @@ export default function useWebRTC(socket, currentUserId) {
       );
     }
   }, []);
+  
+  // [C] Chấp nhận cuộc gọi WebRTC
+  
+  const acceptCall = useCallback(async () => {
+    if (!incomingCall || !socket) return;
+
+    // Chỉ chấp nhận khi đang có cuộc gọi đến
+    if (callStatusRef.current !== "incoming") return;
+
+    // Ghi nhận phiên cuộc gọi bên ngoài try
+    const session = ++sessionRef.current;
+
+    callStatusRef.current = "connecting";
+
+    try {
+      // 1. Lấy thông tin người gọi
+      const { callerId, offer, callType: type } = incomingCall;
+
+
+      clearTimeout(callTimeoutRef.current);
+      callTimeoutRef.current = null;
+
+      // 2. Xin quyền camera/microphone
+      const stream = await getMedia(type);
+      
+      // Dừng nếu không lấy được stream hoặc phiên đã bị hủy
+      if (!stream || session !== sessionRef.current) {
+        stream?.getTracks().forEach((track) => track.stop());
+        return;
+      }
+
+
+      // 3. Tạo kết nối WebRTC
+      const pc = createPeerConnection(callerId);
+
+      // 4. Thêm các track âm thanh/video
+      stream.getTracks().forEach((track) => {
+        pc.addTrack(track, stream);
+      });
+
+      // Kiểm tra cuộc gọi còn hợp lệ
+      if (session !== sessionRef.current) return;
+
+      // 5. Nhận và lưu Offer từ người gọi
+      await pc.setRemoteDescription(
+        new RTCSessionDescription(offer)
+      );
+
+      // Kiểm tra lần nữa trước khi gửi Offer
+      if (session !== sessionRef.current) return;
+
+      await flushIceCandidates();
+
+      // 6. Tạo Answer để phản hồi
+      const answer = await pc.createAnswer();
+
+      // 7. Lưu Answer vào kết nối
+      await pc.setLocalDescription(answer);
+
+      if (session !== sessionRef.current) return;
+
+      // 8. Gửi Answer về người gọi
+      socket.emit("call_answer", {
+        callerId,
+        answer: pc.localDescription.toJSON(),
+      });
+
+      // 9. Cập nhật giao diện
+      setIncomingCall(null);
+      setCallActive(true);
+
+      console.log("Đã chấp nhận cuộc gọi từ:", callerId);
+
+    } catch (error) {
+      console.error("Lỗi chấp nhận cuộc gọi:", error);
+
+      // Chỉ xử lý nếu đây vẫn là phiên cuộc gọi hiện tại
+      if (session !== sessionRef.current) {
+        return;
+      }
+
+      // Thông báo cuộc gọi thất bại cho người gọi
+      if (socket && incomingCall?.callerId) {
+        socket.emit("call_rejected", {
+          callerId: incomingCall.callerId,
+        });
+      }
+
+      // Dọn dẹp camera, microphone và kết nối WebRTC
+      cleanupCall();
+    }
+
+  }, [incomingCall, socket, getMedia, createPeerConnection, flushIceCandidates, cleanupCall]);
+
+  // [C] Từ chối cuộc gọi đến
+  const rejectCall = useCallback(() => {
+
+    // 1. Kiểm tra có cuộc gọi đến hay không
+    if (!incomingCall || callStatusRef.current !== "incoming") {
+      return;
+    }
+
+    // 2. Thông báo từ chối cho người gọi
+    if (socket) {
+      socket.emit("call_rejected", {
+        callerId: incomingCall.callerId,
+      });
+    }
+
+    // 3. Dọn dẹp toàn bộ tài nguyên
+    cleanupCall();
+
+    console.log("Đã từ chối cuộc gọi");
+
+  }, [incomingCall, socket, cleanupCall]);
+
+
+  // [C] Kết thúc cuộc gọi WebRTC
+  const endCall = useCallback(() => {
+
+    // 1. Lấy ID người đang tham gia cuộc gọi
+    const targetId = targetIdRef.current;
+
+    // 2. Thông báo cho đối phương
+    if (socket && targetId) {
+      socket.emit("end_call", { targetId });
+    }
+
+    // 3. Dọn dẹp toàn bộ tài nguyên cuộc gọi
+    cleanupCall();
+
+    console.log("Đã kết thúc cuộc gọi WebRTC");
+
+  }, [socket, cleanupCall]);
+
 
   // [C] Lắng nghe các sự kiện cuộc gọi từ Socket.IO
   useEffect(() => {
@@ -425,7 +490,7 @@ export default function useWebRTC(socket, currentUserId) {
       setCallType(data.callType);
 
       console.log("Cuộc gọi đến từ:", data.callerId);
-      
+
       // Tự động từ chối nếu sau 30 giây không trả lời
       clearTimeout(callTimeoutRef.current);
 
@@ -434,47 +499,90 @@ export default function useWebRTC(socket, currentUserId) {
 
           console.log("Cuộc gọi đến đã hết thời gian chờ");
 
+          // Thông báo cho người gọi
           socket.emit("call_rejected", {
             callerId: data.callerId,
           });
 
-          targetIdRef.current = null;
-          pendingIceRef.current = [];
-          callStatusRef.current = "idle";
-          callTimeoutRef.current = null;
-
-          setIncomingCall(null);
-          setCallActive(false);
+          // Dọn dẹp toàn bộ tài nguyên cuộc gọi
+          cleanupCall();
         }
       }, 30000);
 
     };
 
     // Người nhận đã chấp nhận cuộc gọi
+    
+    // [C] Xử lý Answer từ người nhận cuộc gọi
     const handleCallAnswered = async (data) => {
       const pc = pcRef.current;
 
+      // Kiểm tra cuộc gọi còn ở trạng thái chờ trả lời
       if (!pc || callStatusRef.current !== "calling") {
         return;
       }
 
-      try {
-        clearTimeout(callTimeoutRef.current);
+      // Ghi nhận phiên cuộc gọi hiện tại
+      const session = sessionRef.current;
 
+      try {
+        // Kiểm tra dữ liệu Answer
+        if (!data?.answer) {
+          throw new Error("Answer không hợp lệ");
+        }
+
+        // Ngăn xử lý Answer trùng lặp
+        callStatusRef.current = "connecting";
+
+        // Lưu thông tin Answer từ đối phương
         await pc.setRemoteDescription(
           new RTCSessionDescription(data.answer)
         );
 
+        // Kiểm tra cuộc gọi còn hợp lệ
+        if (
+          session !== sessionRef.current ||
+          pc !== pcRef.current
+        ) {
+          return;
+        }
+
+        // Xử lý ICE Candidate đã lưu tạm
         await flushIceCandidates();
 
-        callStatusRef.current = "active";
-        setCallActive(true);
+        // Kiểm tra lại sau thao tác bất đồng bộ
+        if (
+          session !== sessionRef.current ||
+          pc !== pcRef.current
+        ) {
+          return;
+        }
 
-        console.log("Đối phương đã chấp nhận cuộc gọi");
+        // Đối phương đã trả lời, hủy timeout 30 giây
+        clearTimeout(callTimeoutRef.current);
+        callTimeoutRef.current = null;
+
+        console.log("Đã nhận WebRTC Answer");
+
       } catch (error) {
         console.error("Lỗi xử lý WebRTC Answer:", error);
+
+        // Chỉ kết thúc nếu đây vẫn là phiên hiện tại
+        if (
+          session === sessionRef.current &&
+          pc === pcRef.current
+        ) {
+          const targetId = targetIdRef.current;
+
+          if (targetId) {
+            socket.emit("end_call", { targetId });
+          }
+
+          cleanupCall();
+        }
       }
     };
+
 
     // Nhận ICE Candidate từ đối phương
     const handleIceCandidate = async (data) => {
@@ -487,36 +595,42 @@ export default function useWebRTC(socket, currentUserId) {
       }
     };
 
-    // Đối phương từ chối hoặc kết thúc cuộc gọi
+    // [C] Xử lý khi đối phương từ chối hoặc kết thúc cuộc gọi
     const handleCallEnded = () => {
-      clearTimeout(callTimeoutRef.current);
 
-      localStreamRef.current?.getTracks().forEach(
-        (track) => track.stop()
-      );
+      // Kiểm tra có cuộc gọi đang diễn ra không
+      if (callStatusRef.current === "idle") {
+        return;
+      }
 
-      pcRef.current?.close();
-      pcRef.current = null;
-      localStreamRef.current = null;
-      targetIdRef.current = null;
-      pendingIceRef.current = [];
-      callStatusRef.current = "idle";
+      // Dọn dẹp toàn bộ tài nguyên cuộc gọi
+      cleanupCall();
 
-      setCallActive(false);
-      setIncomingCall(null);
-      setLocalStream(null);
-      setRemoteStream(null);
-      setIsMuted(false);
-      setIsVideoOff(false);
-
-      console.log("Cuộc gọi đã kết thúc");
+      console.log("Đối phương đã kết thúc hoặc từ chối cuộc gọi");
     };
+
+    
+    // [C] Xử lý khi Socket.IO mất kết nối
+    const handleDisconnect = (reason) => {
+
+      console.warn("Socket.IO mất kết nối:", reason);
+
+      // Chỉ dọn dẹp khi đang có cuộc gọi
+      if (callStatusRef.current !== "idle") {
+
+        console.log("Hủy cuộc gọi do mất kết nối Server");
+
+        cleanupCall();
+      }
+    };
+
 
     socket.on("incoming_call", handleIncomingCall);
     socket.on("call_answered", handleCallAnswered);
     socket.on("ice_candidate", handleIceCandidate);
     socket.on("call_rejected", handleCallEnded);
     socket.on("call_ended", handleCallEnded);
+    socket.on("disconnect", handleDisconnect);
 
     // Hủy đăng ký sự kiện để tránh lắng nghe trùng
     return () => {
@@ -525,8 +639,9 @@ export default function useWebRTC(socket, currentUserId) {
       socket.off("ice_candidate", handleIceCandidate);
       socket.off("call_rejected", handleCallEnded);
       socket.off("call_ended", handleCallEnded);
+      socket.off("disconnect", handleDisconnect);
     };
-  }, [socket, addRemoteCandidate, flushIceCandidates]);
+  }, [socket, addRemoteCandidate, flushIceCandidates, cleanupCall]);
 
   // Bật / tắt Mic
   const toggleMute = () => {
