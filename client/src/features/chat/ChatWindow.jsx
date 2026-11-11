@@ -13,48 +13,141 @@ export default function ChatWindow({
   const { socket } = useSocket();
   const [messages, setMessages] = useState([]);
 
+  const roomId = room?._id;
+
   useEffect(() => {
-    if (!room || !socket) {
+    if (!roomId || !socket) {
       setMessages([]);
       return;
     }
 
-    socket.emit("join_room", { roomId: room._id });
+    // Xóa tin nhắn của phòng trước khi chuyển phòng
+    setMessages([]);
 
+    // 1. Nhận lịch sử tin nhắn
     const handleLoadHistory = (history) => {
-      setMessages(history);
+      setMessages(Array.isArray(history) ? history : []);
     };
 
+    // 2. Nhận tin nhắn mới
     const handleReceiveMessage = (newMsg) => {
-      setMessages((prev) => [...prev, newMsg]);
+      setMessages((prev) => {
+        // Tránh thêm tin nhắn trùng ID
+        const exists = prev.some(
+          (msg) => msg._id === newMsg._id
+        );
+
+        if (exists) return prev;
+
+        return [...prev, newMsg];
+      });
     };
 
+    // 3. Nhận sự kiện chỉnh sửa tin nhắn
+    const handleMessageEdited = ({
+      messageId,
+      newText,
+      editedAt,
+      roomId: eventRoomId,
+    }) => {
+      if (eventRoomId && eventRoomId !== roomId) return;
+
+      setMessages((prev) =>
+        prev.map((msg) =>
+          msg._id === messageId
+            ? {
+                ...msg,
+                text: newText,
+                edited: true,
+                editedAt,
+              }
+            : msg
+        )
+      );
+    };
+
+    // 4. Nhận sự kiện thu hồi tin nhắn
+    const handleMessageDeleted = ({
+      messageId,
+      roomId: eventRoomId,
+    }) => {
+      if (eventRoomId && eventRoomId !== roomId) return;
+
+      setMessages((prev) =>
+        prev.map((msg) =>
+          msg._id === messageId
+            ? {
+                ...msg,
+                deleted: true,
+                text: "",
+                image: null,
+              }
+            : msg
+        )
+      );
+    };
+
+    // 5. Nhận sự kiện cập nhật reaction
+    const handleReactionUpdate = ({
+      messageId,
+      reactions,
+      roomId: eventRoomId,
+    }) => {
+      if (eventRoomId && eventRoomId !== roomId) return;
+
+      setMessages((prev) =>
+        prev.map((msg) =>
+          msg._id === messageId
+            ? {
+                ...msg,
+                reactions,
+              }
+            : msg
+        )
+      );
+    };
+
+    // Đăng ký listener trước khi yêu cầu tải lịch sử
     socket.on("load_history", handleLoadHistory);
     socket.on("receive_message", handleReceiveMessage);
+    socket.on("message_edited", handleMessageEdited);
+    socket.on("message_deleted", handleMessageDeleted);
+    socket.on("reaction_update", handleReactionUpdate);
 
+    // Tham gia phòng chat
+    socket.emit("join_room", { roomId });
+
+    // Hủy listener khi đổi phòng hoặc component bị unmount
     return () => {
       socket.off("load_history", handleLoadHistory);
       socket.off("receive_message", handleReceiveMessage);
+      socket.off("message_edited", handleMessageEdited);
+      socket.off("message_deleted", handleMessageDeleted);
+      socket.off("reaction_update", handleReactionUpdate);
     };
-  }, [room, socket]);
+  }, [roomId, socket]);
 
+  // Gửi tin nhắn
   const handleSendMessage = (text, image, replyTo) => {
-    if (!socket || !room) return;
+    if (!socket || !roomId) return;
 
     socket.emit("send_message", {
-      roomId: room._id,
+      roomId,
       text,
       image,
       replyTo,
     });
   };
 
+  // Chưa chọn hội thoại
   if (!room) {
     return (
       <div className="chat-empty">
         <div className="chat-empty-icon">💬</div>
         <h2>Chào mừng đến với Web Chat</h2>
-        <p>Chọn một hội thoại bên trái để bắt đầu trò chuyện.</p>
+        <p>
+          Chọn một hội thoại bên trái để bắt đầu trò chuyện.
+        </p>
       </div>
     );
   }
@@ -69,6 +162,7 @@ export default function ChatWindow({
 
           <div className="chat-header-info">
             <h3>{room.name || "Cuộc trò chuyện"}</h3>
+
             <span>
               {room.isGroup
                 ? `${room.members?.length || 0} thành viên`
@@ -80,7 +174,7 @@ export default function ChatWindow({
         <div className="chat-header-actions">
           <button
             className="chat-action-btn"
-            onClick={() => onStartCall("audio")}
+            onClick={() => onStartCall?.("audio")}
             title="Gọi thoại"
           >
             📞
@@ -88,7 +182,7 @@ export default function ChatWindow({
 
           <button
             className="chat-action-btn"
-            onClick={() => onStartCall("video")}
+            onClick={() => onStartCall?.("video")}
             title="Gọi video"
           >
             📹
@@ -114,7 +208,9 @@ export default function ChatWindow({
       </main>
 
       <footer className="chat-input-area">
-        <MessageInput onSendMessage={handleSendMessage} />
+        <MessageInput
+          onSendMessage={handleSendMessage}
+        />
       </footer>
     </div>
   );
