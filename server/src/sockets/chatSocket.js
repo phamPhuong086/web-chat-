@@ -1,4 +1,3 @@
-
 /**
  * @file chatSocket.js
  * @description Xử lý tin nhắn thời gian thực:
@@ -12,6 +11,14 @@ const { Message, Room } = require("../models");
 function registerChatSocket(io, socket) {
   // Lấy thông tin người dùng từ JWT đã xác thực
   const { id: myId, username: myUsername } = socket.userData || {};
+
+  // Rời khỏi phòng chat khi chuyển sang phòng khác
+  socket.on("leave_room", ({ roomId } = {}) => {
+    if (roomId) {
+      socket.leave(roomId);
+      console.log(`[Chat] Socket ${socket.id} đã rời phòng ${roomId}`);
+    }
+  });
 
   // Kiểm tra ID phòng có hợp lệ không
   const isValidId = (id) => mongoose.Types.ObjectId.isValid(id);
@@ -54,7 +61,10 @@ function registerChatSocket(io, socket) {
       // Đảo thứ tự để hiển thị từ cũ đến mới
       history.reverse();
 
-      socket.emit("load_history", history);
+      socket.emit("load_history", {
+        roomId,
+        messages: history,
+      });
     } catch (error) {
       console.error("[Chat] Lỗi join_room:", error);
 
@@ -65,58 +75,69 @@ function registerChatSocket(io, socket) {
   });
 
   // 2. Gửi tin nhắn mới
-  socket.on("send_message", async ({
-    roomId,
-    text = "",
-    image = null,
-    replyTo = null,
-  } = {}) => {
-    try {
-      if (!(await checkRoomMember(roomId))) {
-        socket.emit("chat_error", {
-          message: "Bạn không có quyền gửi tin nhắn vào phòng này",
+  socket.on(
+    "send_message",
+    async ({ roomId, text = "", image = null, replyTo = null } = {}) => {
+      try {
+        if (!(await checkRoomMember(roomId))) {
+          socket.emit("chat_error", {
+            message: "Bạn không có quyền gửi tin nhắn vào phòng này",
+          });
+          return;
+        }
+
+        // Kiểm tra và chuẩn hóa nội dung tin nhắn
+        if (typeof text !== "string") {
+          text = "";
+        }
+
+        if (image !== null && typeof image !== "string") {
+          socket.emit("chat_error", {
+            message: "Dữ liệu hình ảnh không hợp lệ",
+          });
+          return;
+        }
+
+        // Không cho phép gửi tin nhắn rỗng
+        if (!text.trim() && !image) {
+          return;
+        }
+
+        // Giới hạn độ dài nội dung
+        if (text.length > 20000) {
+          socket.emit("chat_error", {
+            message: "Tin nhắn không được vượt quá 20.000 ký tự",
+          });
+          return;
+        }
+
+        // Tạo tin nhắn mới
+        const newMessage = new Message({
+          roomID: roomId,
+          sender: myUsername,
+          senderId: myId,
+          text,
+          image,
+          replyTo,
         });
-        return;
+
+        // Lưu vào MongoDB
+        const savedMessage = await newMessage.save();
+
+        // Phát tin nhắn đến tất cả thành viên trong phòng
+        io.to(roomId).emit("receive_message", savedMessage);
+      } catch (error) {
+        console.error("[Chat] Lỗi send_message:", error);
+
+        socket.emit("chat_error", {
+          message: "Không thể gửi tin nhắn",
+        });
       }
-
-      // Kiểm tra nội dung tin nhắn
-      if (!text.trim() && !image) {
-        return;
-      }
-
-      // Tạo tin nhắn mới
-      const newMessage = new Message({
-        roomID: roomId,
-        sender: myUsername,
-        senderId: myId,
-        text,
-        image,
-        replyTo,
-      });
-
-      // Lưu vào MongoDB
-      const savedMessage = await newMessage.save();
-
-      // Phát tin nhắn đến tất cả thành viên trong phòng
-      io.to(roomId).emit(
-        "receive_message",
-        savedMessage
-      );
-    } catch (error) {
-      console.error("[Chat] Lỗi send_message:", error);
-
-      socket.emit("chat_error", {
-        message: "Không thể gửi tin nhắn",
-      });
-    }
-  });
+    },
+  );
 
   // 3. Chỉnh sửa tin nhắn
-  socket.on("edit_message", async ({
-    messageId,
-    roomId,
-    newText,
-  } = {}) => {
+  socket.on("edit_message", async ({ messageId, roomId, newText } = {}) => {
     try {
       if (!isValidId(messageId)) {
         return;
@@ -152,6 +173,7 @@ function registerChatSocket(io, socket) {
       await message.save();
 
       io.to(roomId).emit("message_edited", {
+        roomId,
         messageId,
         newText: message.text,
         editedAt: message.editedAt,
@@ -166,10 +188,7 @@ function registerChatSocket(io, socket) {
   });
 
   // 4. Thu hồi tin nhắn
-  socket.on("delete_message", async ({
-    messageId,
-    roomId,
-  } = {}) => {
+  socket.on("delete_message", async ({ messageId, roomId } = {}) => {
     try {
       if (!isValidId(messageId)) {
         return;
@@ -201,6 +220,7 @@ function registerChatSocket(io, socket) {
       await message.save();
 
       io.to(roomId).emit("message_deleted", {
+        roomId,
         messageId,
       });
     } catch (error) {
@@ -213,11 +233,7 @@ function registerChatSocket(io, socket) {
   });
 
   // 5. Thả hoặc gỡ reaction
-  socket.on("react_message", async ({
-    messageId,
-    roomId,
-    emoji,
-  } = {}) => {
+  socket.on("react_message", async ({ messageId, roomId, emoji } = {}) => {
     try {
       if (!isValidId(messageId) || !emoji) {
         return;
@@ -259,11 +275,10 @@ function registerChatSocket(io, socket) {
       await message.save();
 
       // Chuyển Map thành object để gửi về client
-      const reactions = Object.fromEntries(
-        message.reactions
-      );
+      const reactions = Object.fromEntries(message.reactions);
 
       io.to(roomId).emit("reaction_update", {
+        roomId,
         messageId,
         reactions,
       });

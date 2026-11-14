@@ -25,23 +25,49 @@ export default function ChatWindow({
     setMessages([]);
 
     // 1. Nhận lịch sử tin nhắn
-    const handleLoadHistory = (history) => {
-      setMessages(Array.isArray(history) ? history : []);
+      const handleLoadHistory = ({ roomId: eventRoomId, messages: history }) => {
+      // Bỏ qua lịch sử của phòng không còn được mở
+      if (String(eventRoomId) !== String(roomId)) return;
+
+      const historyMessages = Array.isArray(history) ? history : [];
+
+      setMessages((prev) => {
+        const messageMap = new Map();
+
+        historyMessages.forEach((msg) => {
+          messageMap.set(String(msg._id), msg);
+        });
+
+        // Giữ tin nhắn mới nhận trong lúc tải lịch sử
+        prev.forEach((msg) => {
+          if (!messageMap.has(String(msg._id))) {
+            messageMap.set(String(msg._id), msg);
+          }
+        });
+
+        return Array.from(messageMap.values()).sort(
+          (a, b) =>
+            new Date(a.createdAt).getTime() -
+            new Date(b.createdAt).getTime()
+        );
+      });
     };
 
     // 2. Nhận tin nhắn mới
     const handleReceiveMessage = (newMsg) => {
-      setMessages((prev) => {
-        // Tránh thêm tin nhắn trùng ID
-        const exists = prev.some(
-          (msg) => msg._id === newMsg._id
-        );
+    // Chỉ nhận tin nhắn thuộc phòng đang mở
+    if (String(newMsg.roomID) !== String(roomId)) return;
 
-        if (exists) return prev;
+    setMessages((prev) => {
+      const exists = prev.some(
+        (msg) => msg._id === newMsg._id
+      );
 
-        return [...prev, newMsg];
-      });
-    };
+      if (exists) return prev;
+
+      return [...prev, newMsg];
+    });
+  };
 
     // 3. Nhận sự kiện chỉnh sửa tin nhắn
     const handleMessageEdited = ({
@@ -117,8 +143,10 @@ export default function ChatWindow({
     // Tham gia phòng chat
     socket.emit("join_room", { roomId });
 
-    // Hủy listener khi đổi phòng hoặc component bị unmount
+    // Hủy listener và rời phòng khi đổi phòng hoặc component bị unmount
     return () => {
+      socket.emit("leave_room", { roomId });
+
       socket.off("load_history", handleLoadHistory);
       socket.off("receive_message", handleReceiveMessage);
       socket.off("message_edited", handleMessageEdited);
