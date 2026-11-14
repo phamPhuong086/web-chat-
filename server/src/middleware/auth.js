@@ -1,38 +1,102 @@
 /**
  * @file auth.js
- * @description Middleware xác thực JWT token cho các REST API được bảo vệ
+ * @description Middleware và tiện ích xác thực JWT token cho REST API và Socket.IO
  * @assigned_to Thành viên A
- * 
- * THỐNG NHẤT:
- * - Header gửi lên: "Authorization: Bearer <token>"
- * - Khi xác thực thành công, gán thông tin user vào: req.user = { id, username }
- * - Khi xác thực thất bại: trả về HTTP status 401 (Unauthorized) hoặc 403 (Forbidden)
- * 
- * CẦN THÊM GÌ:
- * - Kiểm tra header Authorization có tồn tại và đúng định dạng Bearer hay không.
- * - Sử dụng jwt.verify(token, process.env.JWT_SECRET) để giải mã.
- * - Gán req.user = decoded; gọi next();
- * - Bắt lỗi TokenExpiredError hoặc JsonWebTokenError để phản hồi thông báo cụ thể.
  */
 
 const jwt = require("jsonwebtoken");
 
-const authMiddleware = (req, res, next) => {
-  const authHeader = req.headers.authorization;
-  if (!authHeader || !authHeader.startsWith("Bearer ")) {
-    return res.status(401).json({ message: "Không tìm thấy token xác thực hoặc sai định dạng" });
-  }
+const getSecretKey = () => process.env.JWT_SECRET || "your_super_secret_jwt_key_here";
 
-  const token = authHeader.split(" ")[1];
-  const secretKey = process.env.JWT_SECRET || "your_super_secret_jwt_key_here";
-
-  jwt.verify(token, secretKey, (err, decoded) => {
-    if (err) {
-      return res.status(403).json({ message: "Token không hợp lệ hoặc đã hết hạn" });
-    }
-    req.user = decoded; // { id, username, ... }
-    next();
-  });
+/**
+ * Sinh mã JWT Token từ payload (dùng khi đăng nhập, đăng ký)
+ * @param {object} payload - Dữ liệu đưa vào token (ví dụ: { id, username })
+ * @param {string|number} expiresIn - Thời hạn token (mặc định "7d")
+ * @returns {string} Token đã ký
+ */
+const generateToken = (payload, expiresIn = "7d") => {
+  return jwt.sign(payload, getSecretKey(), { expiresIn });
 };
 
-module.exports = { authMiddleware };
+/**
+ * Giải mã và kiểm tra tính hợp lệ của JWT Token
+ * @param {string} token - Chuỗi token cần kiểm tra
+ * @returns {object} Payload giải mã
+ */
+const verifyToken = (token) => {
+  return jwt.verify(token, getSecretKey());
+};
+
+/**
+ * Middleware bảo vệ các REST API yêu cầu người dùng phải đăng nhập
+ * Client gửi token qua Header: "Authorization: Bearer <token>"
+ */
+const authMiddleware = (req, res, next) => {
+  try {
+    const authHeader = req.headers.authorization;
+    if (!authHeader || !authHeader.startsWith("Bearer ")) {
+      return res.status(401).json({
+        success: false,
+        message: "Không tìm thấy token xác thực hoặc sai định dạng (Bearer <token>)",
+      });
+    }
+
+    const token = authHeader.split(" ")[1];
+    if (!token) {
+      return res.status(401).json({
+        success: false,
+        message: "Token xác thực rỗng",
+      });
+    }
+
+    const decoded = verifyToken(token);
+    req.user = decoded; // { id, username, iat, exp, ... }
+    next();
+  } catch (error) {
+    if (error.name === "TokenExpiredError") {
+      return res.status(401).json({
+        success: false,
+        message: "Token xác thực đã hết hạn, vui lòng đăng nhập lại",
+      });
+    }
+
+    if (error.name === "JsonWebTokenError") {
+      return res.status(403).json({
+        success: false,
+        message: "Token xác thực không hợp lệ",
+      });
+    }
+
+    return res.status(403).json({
+      success: false,
+      message: "Lỗi xác thực người dùng: " + error.message,
+    });
+  }
+};
+
+/**
+ * Middleware xác thực tùy chọn:
+ * Nếu client có gửi kèm token thì giải mã và gán vào req.user,
+ * nếu không gửi thì vẫn cho phép tiếp tục với req.user = null.
+ */
+const optionalAuth = (req, res, next) => {
+  try {
+    const authHeader = req.headers.authorization;
+    if (authHeader && authHeader.startsWith("Bearer ")) {
+      const token = authHeader.split(" ")[1];
+      if (token) {
+        req.user = verifyToken(token);
+      }
+    }
+  } catch {
+    req.user = null;
+  }
+  next();
+};
+
+module.exports = {
+  authMiddleware,
+  optionalAuth,
+  generateToken,
+  verifyToken,
+};
