@@ -1,62 +1,279 @@
+
 /**
  * @file chatSocket.js
- * @description Xử lý tin nhắn thời gian thực: gửi, nhận, chỉnh sửa, thu hồi và reaction
+ * @description Xử lý tin nhắn thời gian thực:
+ * gửi, nhận, chỉnh sửa, thu hồi và reaction.
  * @assigned_to Thành viên B
- * 
- * DANH SÁCH EVENT THỐNG NHẤT:
- * 1. join_room:
- *    - Client emit: { roomId }
- *    - Logic: socket.join(roomId), truy vấn 100 tin nhắn gần nhất từ DB và emit "load_history" về client.
- * 2. send_message:
- *    - Client emit: { roomId, text, image, replyTo }
- *    - Logic: Lưu Message vào MongoDB -> emit "receive_message" tới io.to(roomId).
- * 3. edit_message:
- *    - Client emit: { messageId, roomId, newText }
- *    - Logic: Kiểm tra quyền sở hữu -> Cập nhật DB -> emit "message_edited" tới io.to(roomId).
- * 4. delete_message:
- *    - Client emit: { messageId, roomId }
- *    - Logic: Đánh dấu deleted: true trong DB -> emit "message_deleted" tới io.to(roomId).
- * 5. react_message:
- *    - Client emit: { messageId, roomId, emoji }
- *    - Logic: Thêm hoặc gỡ emoji reaction -> emit "reaction_update" tới io.to(roomId).
  */
 
-// const { Message } = require("../models");
+const mongoose = require("mongoose");
+const { Message, Room } = require("../models");
 
 function registerChatSocket(io, socket) {
+  // Lấy thông tin người dùng từ JWT đã xác thực
   const { id: myId, username: myUsername } = socket.userData || {};
 
-  // 1. Tham gia phòng chat & tải lịch sử
-  socket.on("join_room", async ({ roomId }) => {
-    socket.join(roomId);
-    // TODO: [B] Lấy 100 tin nhắn cũ nhất của roomId sắp xếp theo timestamp tăng dần
-    // const history = await Message.find({ roomID: roomId }).sort({ timestamp: 1 }).limit(100);
-    // socket.emit("load_history", history);
+  // Kiểm tra ID phòng có hợp lệ không
+  const isValidId = (id) => mongoose.Types.ObjectId.isValid(id);
+
+  // Kiểm tra người dùng có thuộc phòng chat không
+  async function checkRoomMember(roomId) {
+    if (!isValidId(roomId) || !myId) {
+      return false;
+    }
+
+    const room = await Room.findOne({
+      _id: roomId,
+      members: myId,
+    });
+
+    return !!room;
+  }
+
+  // 1. Tham gia phòng chat và tải lịch sử
+  socket.on("join_room", async ({ roomId } = {}) => {
+    try {
+      if (!(await checkRoomMember(roomId))) {
+        socket.emit("chat_error", {
+          message: "Bạn không có quyền tham gia phòng chat này",
+        });
+        return;
+      }
+
+      // Tham gia phòng Socket.IO
+      socket.join(roomId);
+
+      // Lấy 100 tin nhắn gần nhất
+      const history = await Message.find({
+        roomID: roomId,
+      })
+        .sort({ createdAt: -1 })
+        .limit(100)
+        .lean();
+
+      // Đảo thứ tự để hiển thị từ cũ đến mới
+      history.reverse();
+
+      socket.emit("load_history", history);
+    } catch (error) {
+      console.error("[Chat] Lỗi join_room:", error);
+
+      socket.emit("chat_error", {
+        message: "Không thể tải lịch sử tin nhắn",
+      });
+    }
   });
 
   // 2. Gửi tin nhắn mới
-  socket.on("send_message", async ({ roomId, text, image, replyTo }) => {
-    // TODO: [B] Lưu tin nhắn vào MongoDB (text có thể đã mã hóa E2EE từ client)
-    // const msg = await new Message({ roomID: roomId, sender: myUsername, senderId: myId, text, image, replyTo }).save();
-    // io.to(roomId).emit("receive_message", msg);
+  socket.on("send_message", async ({
+    roomId,
+    text = "",
+    image = null,
+    replyTo = null,
+  } = {}) => {
+    try {
+      if (!(await checkRoomMember(roomId))) {
+        socket.emit("chat_error", {
+          message: "Bạn không có quyền gửi tin nhắn vào phòng này",
+        });
+        return;
+      }
+
+      // Kiểm tra nội dung tin nhắn
+      if (!text.trim() && !image) {
+        return;
+      }
+
+      // Tạo tin nhắn mới
+      const newMessage = new Message({
+        roomID: roomId,
+        sender: myUsername,
+        senderId: myId,
+        text,
+        image,
+        replyTo,
+      });
+
+      // Lưu vào MongoDB
+      const savedMessage = await newMessage.save();
+
+      // Phát tin nhắn đến tất cả thành viên trong phòng
+      io.to(roomId).emit(
+        "receive_message",
+        savedMessage
+      );
+    } catch (error) {
+      console.error("[Chat] Lỗi send_message:", error);
+
+      socket.emit("chat_error", {
+        message: "Không thể gửi tin nhắn",
+      });
+    }
   });
 
   // 3. Chỉnh sửa tin nhắn
-  socket.on("edit_message", async ({ messageId, roomId, newText }) => {
-    // TODO: [B] Kiểm tra người gửi có phải myId không, cập nhật text & edited: true
-    // io.to(roomId).emit("message_edited", { messageId, newText, editedAt: new Date() });
+  socket.on("edit_message", async ({
+    messageId,
+    roomId,
+    newText,
+  } = {}) => {
+    try {
+      if (!isValidId(messageId)) {
+        return;
+      }
+
+      if (!(await checkRoomMember(roomId))) {
+        return;
+      }
+
+      if (!newText || !newText.trim()) {
+        return;
+      }
+
+      // Chỉ người gửi mới được sửa tin nhắn
+      const message = await Message.findOne({
+        _id: messageId,
+        roomID: roomId,
+        senderId: myId,
+        deleted: false,
+      });
+
+      if (!message) {
+        socket.emit("chat_error", {
+          message: "Không tìm thấy tin nhắn hoặc bạn không có quyền sửa",
+        });
+        return;
+      }
+
+      message.text = newText.trim();
+      message.edited = true;
+      message.editedAt = new Date();
+
+      await message.save();
+
+      io.to(roomId).emit("message_edited", {
+        messageId,
+        newText: message.text,
+        editedAt: message.editedAt,
+      });
+    } catch (error) {
+      console.error("[Chat] Lỗi edit_message:", error);
+
+      socket.emit("chat_error", {
+        message: "Không thể chỉnh sửa tin nhắn",
+      });
+    }
   });
 
-  // 4. Xóa / Thu hồi tin nhắn
-  socket.on("delete_message", async ({ messageId, roomId }) => {
-    // TODO: [B] Đánh dấu deleted: true trong DB
-    // io.to(roomId).emit("message_deleted", { messageId });
+  // 4. Thu hồi tin nhắn
+  socket.on("delete_message", async ({
+    messageId,
+    roomId,
+  } = {}) => {
+    try {
+      if (!isValidId(messageId)) {
+        return;
+      }
+
+      if (!(await checkRoomMember(roomId))) {
+        return;
+      }
+
+      // Chỉ người gửi mới được thu hồi tin nhắn
+      const message = await Message.findOne({
+        _id: messageId,
+        roomID: roomId,
+        senderId: myId,
+        deleted: false,
+      });
+
+      if (!message) {
+        socket.emit("chat_error", {
+          message: "Không tìm thấy tin nhắn hoặc bạn không có quyền thu hồi",
+        });
+        return;
+      }
+
+      message.deleted = true;
+      message.text = "";
+      message.image = null;
+
+      await message.save();
+
+      io.to(roomId).emit("message_deleted", {
+        messageId,
+      });
+    } catch (error) {
+      console.error("[Chat] Lỗi delete_message:", error);
+
+      socket.emit("chat_error", {
+        message: "Không thể thu hồi tin nhắn",
+      });
+    }
   });
 
-  // 5. Thả biểu cảm cảm xúc (Reaction)
-  socket.on("react_message", async ({ messageId, roomId, emoji }) => {
-    // TODO: [B] Cập nhật mảng reactions của tin nhắn
-    // io.to(roomId).emit("reaction_update", { messageId, reactions });
+  // 5. Thả hoặc gỡ reaction
+  socket.on("react_message", async ({
+    messageId,
+    roomId,
+    emoji,
+  } = {}) => {
+    try {
+      if (!isValidId(messageId) || !emoji) {
+        return;
+      }
+
+      if (!(await checkRoomMember(roomId))) {
+        return;
+      }
+
+      const message = await Message.findOne({
+        _id: messageId,
+        roomID: roomId,
+        deleted: false,
+      });
+
+      if (!message) {
+        return;
+      }
+
+      // Lấy danh sách người đã thả emoji
+      const users = message.reactions.get(emoji) || [];
+
+      // Nếu đã thả thì gỡ, chưa thả thì thêm
+      const userIndex = users.indexOf(myId.toString());
+
+      if (userIndex !== -1) {
+        users.splice(userIndex, 1);
+      } else {
+        users.push(myId.toString());
+      }
+
+      // Cập nhật Map reactions
+      if (users.length === 0) {
+        message.reactions.delete(emoji);
+      } else {
+        message.reactions.set(emoji, users);
+      }
+
+      await message.save();
+
+      // Chuyển Map thành object để gửi về client
+      const reactions = Object.fromEntries(
+        message.reactions
+      );
+
+      io.to(roomId).emit("reaction_update", {
+        messageId,
+        reactions,
+      });
+    } catch (error) {
+      console.error("[Chat] Lỗi react_message:", error);
+
+      socket.emit("chat_error", {
+        message: "Không thể cập nhật reaction",
+      });
+    }
   });
 }
 

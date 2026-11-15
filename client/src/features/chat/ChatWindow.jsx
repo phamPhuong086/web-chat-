@@ -1,91 +1,217 @@
-/**
- * @file ChatWindow.jsx
- * @description Cửa sổ chat chính (Hiển thị Header phòng chat, danh sách tin nhắn và khung soạn thảo)
- * @assigned_to Thành viên B (phối hợp với C ở nút gọi thoại/video)
- * 
- * CẦN THÊM GÌ:
- * - Lắng nghe Socket:
- *   + Khi đổi phòng: socket.emit("join_room", { roomId })
- *   + Nghe "load_history" để set messageList ban đầu
- *   + Nghe "receive_message" để append tin nhắn mới
- *   + Nghe "message_edited", "message_deleted", "reaction_update"
- * - Mã hóa & giải mã E2EE (qua utils/crypto.js) nếu là phòng 1-1.
- * - Nút gọi thoại và video trên Header: kích hoạt onStartCall("audio" | "video") cho Thành viên C.
- */
 
 import { useState, useEffect } from "react";
 import { useSocket } from "../../context/SocketContext";
 import MessageList from "./MessageList";
 import MessageInput from "./MessageInput";
 
-export default function ChatWindow({ room, currentUserId, onStartCall, onOpenGroupSettings }) {
+export default function ChatWindow({
+  room,
+  currentUserId,
+  onStartCall,
+  onOpenGroupSettings,
+}) {
   const { socket } = useSocket();
   const [messages, setMessages] = useState([]);
 
+  const roomId = room?._id;
+
   useEffect(() => {
-    if (!room || !socket) return;
+    if (!roomId || !socket) {
+      setMessages([]);
+      return;
+    }
 
-    // 1. Tham gia phòng chat
-    socket.emit("join_room", { roomId: room._id });
+    // Xóa tin nhắn của phòng trước khi chuyển phòng
+    setMessages([]);
 
-    // 2. Tải lịch sử tin nhắn
+    // 1. Nhận lịch sử tin nhắn
     const handleLoadHistory = (history) => {
-      // TODO: [B] Giải mã E2EE tin nhắn nếu là phòng 1-1
-      setMessages(history);
+      setMessages(Array.isArray(history) ? history : []);
     };
 
-    // 3. Nhận tin nhắn mới realtime
+    // 2. Nhận tin nhắn mới
     const handleReceiveMessage = (newMsg) => {
-      // TODO: [B] Giải mã E2EE nếu cần
-      setMessages((prev) => [...prev, newMsg]);
+      setMessages((prev) => {
+        // Tránh thêm tin nhắn trùng ID
+        const exists = prev.some(
+          (msg) => msg._id === newMsg._id
+        );
+
+        if (exists) return prev;
+
+        return [...prev, newMsg];
+      });
     };
 
+    // 3. Nhận sự kiện chỉnh sửa tin nhắn
+    const handleMessageEdited = ({
+      messageId,
+      newText,
+      editedAt,
+      roomId: eventRoomId,
+    }) => {
+      if (eventRoomId && eventRoomId !== roomId) return;
+
+      setMessages((prev) =>
+        prev.map((msg) =>
+          msg._id === messageId
+            ? {
+                ...msg,
+                text: newText,
+                edited: true,
+                editedAt,
+              }
+            : msg
+        )
+      );
+    };
+
+    // 4. Nhận sự kiện thu hồi tin nhắn
+    const handleMessageDeleted = ({
+      messageId,
+      roomId: eventRoomId,
+    }) => {
+      if (eventRoomId && eventRoomId !== roomId) return;
+
+      setMessages((prev) =>
+        prev.map((msg) =>
+          msg._id === messageId
+            ? {
+                ...msg,
+                deleted: true,
+                text: "",
+                image: null,
+              }
+            : msg
+        )
+      );
+    };
+
+    // 5. Nhận sự kiện cập nhật reaction
+    const handleReactionUpdate = ({
+      messageId,
+      reactions,
+      roomId: eventRoomId,
+    }) => {
+      if (eventRoomId && eventRoomId !== roomId) return;
+
+      setMessages((prev) =>
+        prev.map((msg) =>
+          msg._id === messageId
+            ? {
+                ...msg,
+                reactions,
+              }
+            : msg
+        )
+      );
+    };
+
+    // Đăng ký listener trước khi yêu cầu tải lịch sử
     socket.on("load_history", handleLoadHistory);
     socket.on("receive_message", handleReceiveMessage);
+    socket.on("message_edited", handleMessageEdited);
+    socket.on("message_deleted", handleMessageDeleted);
+    socket.on("reaction_update", handleReactionUpdate);
 
+    // Tham gia phòng chat
+    socket.emit("join_room", { roomId });
+
+    // Hủy listener khi đổi phòng hoặc component bị unmount
     return () => {
       socket.off("load_history", handleLoadHistory);
       socket.off("receive_message", handleReceiveMessage);
+      socket.off("message_edited", handleMessageEdited);
+      socket.off("message_deleted", handleMessageDeleted);
+      socket.off("reaction_update", handleReactionUpdate);
     };
-  }, [room, socket]);
+  }, [roomId, socket]);
 
+  // Gửi tin nhắn
+  const handleSendMessage = (text, image, replyTo) => {
+    if (!socket || !roomId) return;
+
+    socket.emit("send_message", {
+      roomId,
+      text,
+      image,
+      replyTo,
+    });
+  };
+
+  // Chưa chọn hội thoại
   if (!room) {
     return (
-      <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", color: "#888" }}>
-        Chọn một hội thoại để bắt đầu trò chuyện
+      <div className="chat-empty">
+        <div className="chat-empty-icon">💬</div>
+        <h2>Chào mừng đến với Web Chat</h2>
+        <p>
+          Chọn một hội thoại bên trái để bắt đầu trò chuyện.
+        </p>
       </div>
     );
   }
 
-  const handleSendMessage = (text, image, replyTo) => {
-    if (!socket) return;
-    // TODO: [B] Mã hóa tin nhắn E2EE nếu là phòng chat 1-1 trước khi emit
-    socket.emit("send_message", { roomId: room._id, text, image, replyTo });
-  };
-
   return (
-    <div style={{ flex: 1, display: "flex", flexDirection: "column", height: "100%" }}>
-      {/* Header Cửa Sổ Chat */}
-      <div style={{ padding: 12, borderBottom: "1px solid #ddd", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-        <div>
-          <h4 style={{ margin: 0 }}>{room.name || "Cuộc trò chuyện"}</h4>
-          <span style={{ fontSize: 12, color: "#888" }}>{room.isGroup ? `${room.members?.length} thành viên` : "Trực tuyến"}</span>
+    <div className="chat-window">
+      <header className="chat-header">
+        <div className="chat-header-user">
+          <div className="chat-avatar">
+            {room.name?.charAt(0).toUpperCase() || "C"}
+          </div>
+
+          <div className="chat-header-info">
+            <h3>{room.name || "Cuộc trò chuyện"}</h3>
+
+            <span>
+              {room.isGroup
+                ? `${room.members?.length || 0} thành viên`
+                : "● Trực tuyến"}
+            </span>
+          </div>
         </div>
-        <div style={{ display: "flex", gap: 8 }}>
-          {/* Nút gọi thoại & video dành cho Thành viên C */}
-          <button onClick={() => onStartCall("audio")} title="Gọi thoại" style={{ padding: "6px 12px", cursor: "pointer" }}>📞 Thoại</button>
-          <button onClick={() => onStartCall("video")} title="Gọi video" style={{ padding: "6px 12px", cursor: "pointer" }}>📹 Video</button>
+
+        <div className="chat-header-actions">
+          <button
+            className="chat-action-btn"
+            onClick={() => onStartCall?.("audio")}
+            title="Gọi thoại"
+          >
+            📞
+          </button>
+
+          <button
+            className="chat-action-btn"
+            onClick={() => onStartCall?.("video")}
+            title="Gọi video"
+          >
+            📹
+          </button>
+
           {room.isGroup && (
-            <button onClick={onOpenGroupSettings} title="Cài đặt nhóm" style={{ padding: "6px 12px", cursor: "pointer" }}>⚙️ Nhóm</button>
+            <button
+              className="chat-action-btn"
+              onClick={onOpenGroupSettings}
+              title="Cài đặt nhóm"
+            >
+              ⚙️
+            </button>
           )}
         </div>
-      </div>
+      </header>
 
-      {/* Danh Sách Tin Nhắn */}
-      <MessageList messages={messages} currentUserId={currentUserId} />
+      <main className="chat-message-area">
+        <MessageList
+          messages={messages}
+          currentUserId={currentUserId}
+        />
+      </main>
 
-      {/* Khung Soạn Thảo Tin Nhắn */}
-      <MessageInput onSendMessage={handleSendMessage} />
+      <footer className="chat-input-area">
+        <MessageInput
+          onSendMessage={handleSendMessage}
+        />
+      </footer>
     </div>
   );
 }
