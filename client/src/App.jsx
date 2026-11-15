@@ -99,16 +99,27 @@ export default function App() {
 
     if (!selectedRoom) return;
 
-    const target = selectedRoom.members?.find(
-      (m) => (m._id || m) !== user.id
+    // Chỉ hỗ trợ gọi điện trong phòng có đúng 2 thành viên
+    if (selectedRoom.members?.length !== 2) {
+      alert("Chỉ hỗ trợ gọi P2P cho cuộc trò chuyện 1-1");
+      return;
+    }
+
+    // Chuẩn hóa ID người dùng hiện tại
+    const currentUserId = String(user.id);
+
+    // Tìm ID của người còn lại
+    const target = selectedRoom.members.find(
+      (m) => String(m._id || m) !== currentUserId
     );
 
     const targetId = target?._id || target;
 
-    if (targetId) {
-      startCall(targetId, type);
+    // Kiểm tra ID người nhận trước khi gọi
+    if (targetId && String(targetId) !== currentUserId) {
+      startCall(String(targetId), type);
     } else {
-      alert("Chỉ hỗ trợ gọi P2P cho cuộc trò chuyện 1-1");
+      alert("Không tìm thấy người nhận cuộc gọi");
     }
   };
 
