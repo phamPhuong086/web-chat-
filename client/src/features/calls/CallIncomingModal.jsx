@@ -22,14 +22,7 @@ export default function CallIncomingModal({ incomingCall, onAcceptCall, onReject
 
     setTimeLeft(CALL_TIMEOUT_SECONDS);
     const timer = setInterval(() => {
-      setTimeLeft((prev) => {
-        if (prev <= 1) {
-          clearInterval(timer);
-          onRejectCall(); // Hết 30 giây tự động hủy
-          return 0;
-        }
-        return prev - 1;
-      });
+      setTimeLeft((prev) => Math.max(prev - 1, 0));
     }, 1000);
 
     return () => clearInterval(timer);

@@ -11,7 +11,7 @@
  * - Hiển thị thời lượng cuộc gọi (bấm giờ sau khi kết nối thành công).
  */
 
-import { useRef, useEffect } from "react";
+import { useRef, useEffect, useState } from "react";
 
 export default function CallOverlay({
   callActive,
@@ -27,28 +27,102 @@ export default function CallOverlay({
   const localVideoRef = useRef(null);
   const remoteVideoRef = useRef(null);
 
+  // Thẻ audio dùng để phát âm thanh đối phương
+  const remoteAudioRef = useRef(null);
+
+  // Thời lượng cuộc gọi (đơn vị: giây)
+  const [callDuration, setCallDuration] = useState(0);
+
+  // Bắt đầu đếm thời gian khi WebRTC kết nối thành công
   useEffect(() => {
-    if (localVideoRef.current && localStream) {
-      localVideoRef.current.srcObject = localStream;
+    if (!callActive) {
+      setCallDuration(0);
+      return;
     }
-  }, [localStream]);
+
+    const startTime = Date.now();
+
+    const timer = setInterval(() => {
+      const elapsedSeconds = Math.floor(
+        (Date.now() - startTime) / 1000
+      );
+
+      setCallDuration(elapsedSeconds);
+    }, 1000);
+
+    return () => clearInterval(timer);
+  }, [callActive]);
 
   useEffect(() => {
-    if (remoteVideoRef.current && remoteStream) {
-      remoteVideoRef.current.srcObject = remoteStream;
-    }
-  }, [remoteStream]);
+    if (!callActive || !localVideoRef.current) return;
+
+    localVideoRef.current.srcObject = localStream || null;
+  }, [callActive, callType, localStream]);
+
+  useEffect(() => {
+    if (!callActive || !remoteVideoRef.current) return;
+
+    remoteVideoRef.current.srcObject = remoteStream || null;
+  }, [callActive, callType, remoteStream]);
+
+  // Phát âm thanh đối phương khi gọi thoại
+  useEffect(() => {
+    if (!callActive || callType !== "audio") return;
+
+    const audioElement = remoteAudioRef.current;
+
+    if (!audioElement) return;
+
+    audioElement.srcObject = remoteStream || null;
+
+    return () => {
+      audioElement.srcObject = null;
+    };
+  }, [callActive, callType, remoteStream]);
 
   if (!callActive) return null;
 
+  // Chuyển số giây thành định dạng MM:SS
+  const formatDuration = (seconds) => {
+    const minutes = Math.floor(seconds / 60);
+    const remainingSeconds = seconds % 60;
+
+    return `${String(minutes).padStart(2, "0")}:${String(
+      remainingSeconds
+    ).padStart(2, "0")}`;
+  };
+
   return (
-    <div style={{ position: "fixed", inset: 0, background: "#111", zIndex: 9999, display: "flex", flexDirection: "column" }}>
-      {/* Khung hiển thị Video Remote (Đối phương) */}
+  <div style={{ position: "fixed", inset: 0, background: "#111", zIndex: 9999, display: "flex", flexDirection: "column" }}>
+
+    {/* Hiển thị thời lượng cuộc gọi */}
+    <div
+      style={{
+        padding: "16px",
+        textAlign: "center",
+        color: "#fff",
+        background: "rgba(0,0,0,0.5)",
+        fontSize: 20,
+        fontWeight: "bold",
+      }}
+    >
+      ⏱️ {formatDuration(callDuration)}
+    </div>
+
+    {/* Khung hiển thị Video Remote (Đối phương) */}
       <div style={{ flex: 1, position: "relative", display: "flex", alignItems: "center", justifyContent: "center" }}>
         {callType === "video" ? (
           <video ref={remoteVideoRef} autoPlay playsInline style={{ width: "100%", height: "100%", objectFit: "cover" }} />
         ) : (
-          <div style={{ color: "#fff", fontSize: 24 }}>📞 Đang gọi thoại...</div>
+          <div style={{ color: "#fff", fontSize: 24 }}>
+            <audio
+              ref={remoteAudioRef}
+              autoPlay
+              playsInline
+            />
+
+            <p>📞 Đang gọi thoại...</p>
+          </div>
         )}
 
         {/* Khung nhỏ hiển thị Video Local (Của mình) */}
