@@ -137,9 +137,7 @@ export default function useWebRTC(socket, currentUserId) {
   const createPeerConnection = useCallback((targetId) => {
 
     // Khởi tạo kết nối với cấu hình STUN
-    const pc = new RTCPeerConnection({
-      iceServers: ICE_SERVERS,
-    });
+    const pc = new RTCPeerConnection(ICE_SERVERS);
 
     // Lưu kết nối để sử dụng ở các hàm khác
     pcRef.current = pc;

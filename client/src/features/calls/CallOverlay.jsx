@@ -110,7 +110,17 @@ export default function CallOverlay({
     </div>
 
     {/* Khung hiển thị Video Remote (Đối phương) */}
-      <div style={{ flex: 1, position: "relative", display: "flex", alignItems: "center", justifyContent: "center" }}>
+      <div
+        style={{
+          flex: 1,
+          minHeight: 0,
+          position: "relative",
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          overflow: "hidden",
+        }}
+>
         {callType === "video" ? (
           <video ref={remoteVideoRef} autoPlay playsInline style={{ width: "100%", height: "100%", objectFit: "cover" }} />
         ) : (
