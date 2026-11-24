@@ -4,7 +4,7 @@
  * @assigned_to Phối hợp A, B, C (A quản lý khung kết nối)
  */
 
-const jwt = require("jsonwebtoken");
+const { verifyToken } = require("../middleware/auth");
 const { registerUserSocket } = require("./userSocket");
 const { registerChatSocket } = require("./chatSocket");
 const { registerCallSocket } = require("./callSocket");
@@ -17,14 +17,13 @@ function initSocketServer(io) {
       return next(new Error("Xác thực Socket thất bại: Không có token"));
     }
 
-    const secretKey = process.env.JWT_SECRET || "your_super_secret_jwt_key_here";
-    jwt.verify(token, secretKey, (err, decoded) => {
-      if (err) {
-        return next(new Error("Xác thực Socket thất bại: Token không hợp lệ"));
-      }
+    try {
+      const decoded = verifyToken(token);
       socket.userData = decoded; // { id, username }
       next();
-    });
+    } catch (err) {
+      return next(new Error("Xác thực Socket thất bại: Token không hợp lệ hoặc đã hết hạn"));
+    }
   });
 
   io.on("connection", (socket) => {

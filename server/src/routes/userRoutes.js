@@ -2,92 +2,130 @@
  * @file userRoutes.js
  * @description API Quản lý hồ sơ cá nhân, tìm kiếm người dùng và lưu trữ Public Key E2EE
  * @assigned_to Thành viên A
- * 
- * DANH SÁCH API THỐNG NHẤT:
- * 1. GET /api/users/profile (Yêu cầu auth)
- *    - Lấy thông tin user hiện tại (trừ password)
- * 2. PUT /api/users/profile (Yêu cầu auth)
- *    - Body: { bio, hobbies, birthday, avatar }
- *    - Cập nhật thông tin cá nhân
- * 3. PUT /api/users/password (Yêu cầu auth)
- *    - Body: { currentPassword, newPassword }
- *    - Kiểm tra mật khẩu cũ và băm cập nhật mật khẩu mới
- * 4. GET /api/users/search?keyword=abc (Yêu cầu auth)
- *    - Tìm kiếm user theo username
- * 5. PUT /api/users/public-key (Yêu cầu auth - Dành cho E2EE của B)
- *    - Body: { publicKey }
- *    - Lưu public key của user lên DB
- * 6. GET /api/users/:userId/public-key (Yêu cầu auth - Dành cho E2EE của B)
- *    - Trả về public key của đối phương để B mã hóa tin nhắn
  */
 
 const express = require("express");
 const router = express.Router();
+const bcrypt = require("bcryptjs");
 const { authMiddleware } = require("../middleware/auth");
-// const { User } = require("../models");
+const { User } = require("../models");
 
-// GET /api/users/profile
+// GET /api/users/profile - Lấy thông tin hồ sơ của user đang đăng nhập
 router.get("/profile", authMiddleware, async (req, res) => {
   try {
-    // TODO: [A] Tìm user theo req.user.id, loại trừ trường password (.select("-password"))
-    return res.status(501).json({ message: "TODO: [A] Triển khai lấy hồ sơ người dùng" });
+    const user = await User.findById(req.user.id).select("-password");
+    if (!user) {
+      return res.status(404).json({ message: "Không tìm thấy người dùng" });
+    }
+    return res.json(user);
   } catch (error) {
-    return res.status(500).json({ error: error.message });
+    console.error("Lỗi lấy thông tin hồ sơ:", error);
+    return res.status(500).json({ message: "Lỗi hệ thống: " + error.message });
   }
 });
 
-// PUT /api/users/profile
+// PUT /api/users/profile - Cập nhật thông tin hồ sơ
 router.put("/profile", authMiddleware, async (req, res) => {
   try {
     const { bio, hobbies, birthday, avatar } = req.body;
-    // TODO: [A] Cập nhật bio, hobbies, birthday, avatar cho user có _id = req.user.id
-    return res.status(501).json({ message: "TODO: [A] Triển khai cập nhật hồ sơ" });
+    const updateData = {};
+    if (bio !== undefined) updateData.bio = bio;
+    if (hobbies !== undefined) updateData.hobbies = Array.isArray(hobbies) ? hobbies : [];
+    if (birthday !== undefined) updateData.birthday = birthday || null;
+    if (avatar !== undefined) updateData.avatar = avatar;
+
+    const user = await User.findByIdAndUpdate(
+      req.user.id,
+      { $set: updateData },
+      { new: true }
+    ).select("-password");
+
+    return res.json({ message: "Cập nhật hồ sơ thành công", user });
   } catch (error) {
-    return res.status(500).json({ error: error.message });
+    console.error("Lỗi cập nhật hồ sơ:", error);
+    return res.status(500).json({ message: "Lỗi hệ thống: " + error.message });
   }
 });
 
-// PUT /api/users/password
+// PUT /api/users/password - Đổi mật khẩu
 router.put("/password", authMiddleware, async (req, res) => {
   try {
     const { currentPassword, newPassword } = req.body;
-    // TODO: [A] Kiểm tra mật khẩu hiện tại có đúng không -> Hash mật khẩu mới và lưu
-    return res.status(501).json({ message: "TODO: [A] Triển khai đổi mật khẩu" });
+    if (!currentPassword || !newPassword) {
+      return res.status(400).json({ message: "Vui lòng nhập cả mật khẩu cũ và mật khẩu mới" });
+    }
+
+    if (newPassword.length < 6) {
+      return res.status(400).json({ message: "Mật khẩu mới phải có ít nhất 6 ký tự" });
+    }
+
+    const user = await User.findById(req.user.id);
+    if (!user) {
+      return res.status(404).json({ message: "Không tìm thấy người dùng" });
+    }
+
+    const isMatch = await bcrypt.compare(currentPassword, user.password);
+    if (!isMatch) {
+      return res.status(400).json({ message: "Mật khẩu hiện tại không đúng" });
+    }
+
+    user.password = await bcrypt.hash(newPassword, 10);
+    await user.save();
+
+    return res.json({ message: "Đổi mật khẩu thành công" });
   } catch (error) {
-    return res.status(500).json({ error: error.message });
+    console.error("Lỗi đổi mật khẩu:", error);
+    return res.status(500).json({ message: "Lỗi hệ thống: " + error.message });
   }
 });
 
-// GET /api/users/search
+// GET /api/users/search?keyword=abc - Tìm kiếm người dùng theo username
 router.get("/search", authMiddleware, async (req, res) => {
   try {
     const { keyword } = req.query;
-    // TODO: [A] Tìm kiếm user theo username (hỗ trợ regex tìm kiếm không phân biệt hoa thường)
-    return res.status(501).json({ message: "TODO: [A] Triển khai tìm kiếm người dùng" });
+    if (!keyword || !keyword.trim()) {
+      return res.json([]);
+    }
+
+    const cleanKeyword = keyword.trim();
+    const users = await User.find({
+      username: { $regex: cleanKeyword, $options: "i" },
+      _id: { $ne: req.user.id },
+    })
+      .select("-password")
+      .limit(20);
+
+    return res.json(users);
   } catch (error) {
-    return res.status(500).json({ error: error.message });
+    console.error("Lỗi tìm kiếm người dùng:", error);
+    return res.status(500).json({ message: "Lỗi hệ thống: " + error.message });
   }
 });
 
-// PUT /api/users/public-key (Hỗ trợ E2EE cho Thành viên B)
+// PUT /api/users/public-key - Cập nhật Public Key E2EE
 router.put("/public-key", authMiddleware, async (req, res) => {
   try {
     const { publicKey } = req.body;
-    // TODO: [A] Cập nhật trường publicKey cho user req.user.id
-    return res.status(501).json({ message: "TODO: [A] Lưu public key E2EE" });
+    await User.findByIdAndUpdate(req.user.id, { publicKey: publicKey || "" });
+    return res.json({ message: "Lưu Public Key thành công" });
   } catch (error) {
-    return res.status(500).json({ error: error.message });
+    console.error("Lỗi lưu public key:", error);
+    return res.status(500).json({ message: "Lỗi hệ thống: " + error.message });
   }
 });
 
-// GET /api/users/:userId/public-key (Cung cấp public key cho Thành viên B mã hóa)
+// GET /api/users/:userId/public-key - Lấy Public Key của đối phương
 router.get("/:userId/public-key", authMiddleware, async (req, res) => {
   try {
     const { userId } = req.params;
-    // TODO: [A] Lấy publicKey của user theo userId
-    return res.status(501).json({ message: "TODO: [A] Trả về public key của đối phương" });
+    const user = await User.findById(userId).select("publicKey username");
+    if (!user) {
+      return res.status(404).json({ message: "Không tìm thấy người dùng" });
+    }
+    return res.json({ userId: user._id, publicKey: user.publicKey || "" });
   } catch (error) {
-    return res.status(500).json({ error: error.message });
+    console.error("Lỗi lấy public key:", error);
+    return res.status(500).json({ message: "Lỗi hệ thống: " + error.message });
   }
 });
 

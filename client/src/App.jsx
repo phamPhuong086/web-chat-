@@ -6,6 +6,7 @@
 
 import { useState } from "react";
 import "./App.css";
+import api from "./config/api";
 
 import { useAuth } from "./context/AuthContext";
 import { useSocket } from "./context/SocketContext";
@@ -134,6 +135,32 @@ export default function App() {
     window.location.reload();
   };
 
+  // Mở phòng chat 1-1 với bạn bè
+  const handleSelectFriendToChat = async (friendId) => {
+    try {
+      const res = await api.post("/rooms", {
+        isGroup: false,
+        memberIds: [friendId],
+      });
+      setSelectedRoom(res.data);
+      setActiveTab("rooms");
+      if (socket) {
+        socket.emit("join_created_room", { roomId: res.data._id });
+      }
+    } catch (err) {
+      alert("Lỗi khi mở phòng chat: " + (err.response?.data?.message || err.message));
+    }
+  };
+
+  // Xử lý khi nhóm mới được tạo
+  const handleGroupCreated = (newGroup) => {
+    setSelectedRoom(newGroup);
+    setActiveTab("rooms");
+    if (socket) {
+      socket.emit("join_created_room", { roomId: newGroup._id });
+    }
+  };
+
   return (
     <div className="app-container">
 
@@ -252,11 +279,7 @@ export default function App() {
               </p>
             ) : (
               <FriendList
-                onSelectFriendToChat={(friendId) => {
-                  alert(
-                    `TODO: Mở phòng chat với friend: ${friendId}`
-                  );
-                }}
+                onSelectFriendToChat={handleSelectFriendToChat}
               />
             )
           )}
@@ -289,7 +312,7 @@ export default function App() {
         />
       </div>
 
-      {/* ================================= */}
+{/* ================================= */}
       {/* MODAL - THÀNH VIÊN A */}
       {/* ================================= */}
 
@@ -303,9 +326,7 @@ export default function App() {
           <CreateGroupModal
             isOpen={isCreateGroupOpen}
             onClose={() => setIsCreateGroupOpen(false)}
-            onGroupCreated={(newGroup) =>
-              setSelectedRoom(newGroup)
-            }
+            onGroupCreated={handleGroupCreated}
           />
 
           <GroupSettingsModal

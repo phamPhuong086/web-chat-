@@ -1,23 +1,15 @@
 /**
  * @file userSocket.js
- * @description Xử lý theo dõi trạng thái Online/Offline của người dùng
+ * @description Xử lý theo dõi trạng thái Online/Offline của người dùng và tham gia các room chat
  * @assigned_to Thành viên A
- * 
- * EVENT THỐNG NHẤT:
- * - user_status_change: Phát tới toàn bộ client khi user online/offline: { userId, isOnline }
- * 
- * CẦN THÊM GÌ:
- * - Quản lý danh sách socketId theo userId (đề phòng 1 user mở nhiều tab).
- * - Khi kết nối socket đầu tiên của user mở -> Cập nhật isOnline: true trong DB và emit "user_status_change".
- * - Khi user ngắt kết nối socket cuối cùng -> Cập nhật isOnline: false trong DB và emit "user_status_change".
  */
 
-// const { User } = require("../models");
+const { User, Room } = require("../models");
 
 // Map lưu trữ userId -> Set các socket.id đang hoạt động
 const onlineUsers = new Map();
 
-function registerUserSocket(io, socket) {
+async function registerUserSocket(io, socket) {
   const userId = socket.userData?.id;
   if (!userId) return;
 
@@ -31,19 +23,42 @@ function registerUserSocket(io, socket) {
   // Cho socket join vào room cá nhân mang chính userId để nhận thông báo riêng
   socket.join(userId);
 
-  // TODO: [A] Nếu đây là kết nối đầu tiên (userSockets.size === 1):
-  // Cập nhật User.findByIdAndUpdate(userId, { isOnline: true })
-  // io.emit("user_status_change", { userId, isOnline: true });
+  try {
+    // Nếu đây là kết nối đầu tiên của user (vừa mới online)
+    if (userSockets.size === 1) {
+      await User.findByIdAndUpdate(userId, { isOnline: true });
+      io.emit("user_status_change", { userId, isOnline: true });
+    }
+
+    // Tự động cho socket tham gia vào tất cả các phòng chat mà user là thành viên
+    const rooms = await Room.find({ members: userId });
+    rooms.forEach((r) => {
+      socket.join(r._id.toString());
+    });
+  } catch (error) {
+    console.error("❌ Lỗi khi khởi tạo socket kết nối user:", error.message);
+  }
+
+  // Lắng nghe sự kiện tham gia phòng mới sau khi được tạo
+  socket.on("join_created_room", ({ roomId }) => {
+    if (roomId) {
+      socket.join(roomId);
+    }
+  });
 
   // Xử lý khi ngắt kết nối
   socket.on("disconnect", async () => {
     userSockets.delete(socket.id);
     if (userSockets.size === 0) {
       onlineUsers.delete(userId);
-      // TODO: [A] Cập nhật User.findByIdAndUpdate(userId, { isOnline: false })
-      // io.emit("user_status_change", { userId, isOnline: false });
+      try {
+        await User.findByIdAndUpdate(userId, { isOnline: false });
+        io.emit("user_status_change", { userId, isOnline: false });
+      } catch (error) {
+        console.error("❌ Lỗi khi cập nhật offline user:", error.message);
+      }
     }
   });
 }
 
-module.exports = { registerUserSocket };
+module.exports = { registerUserSocket, onlineUsers };
