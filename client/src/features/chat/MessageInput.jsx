@@ -1,81 +1,157 @@
-/**
- * @file MessageInput.jsx
- * @description Khung soạn thảo tin nhắn: nhập text, chọn ảnh đính kèm, chọn emoji
- * @assigned_to Thành viên B
- * 
- * CẦN THÊM GÌ:
- * - Input text, bấm Enter gửi tin nhắn (Shift+Enter xuống dòng).
- * - Nút chọn ảnh từ máy tính (convert sang Base64 hoặc upload URL).
- * - Nút bật mở Emoji Picker (emoji-picker-react).
- * - Hiển thị preview ảnh trước khi bấm gửi.
- * - Gọi onSendMessage(text, image, replyTo).
- */
 
-import { useState } from "react";
+import { useState, useRef } from "react";
+import EmojiPicker from "emoji-picker-react";
 
-export default function MessageInput({ onSendMessage, replyTo, onCancelReply }) {
+export default function MessageInput({
+  onSendMessage,
+  replyTo,
+  onCancelReply,
+}) {
   const [text, setText] = useState("");
   const [image, setImage] = useState(null);
+  const [showEmoji, setShowEmoji] = useState(false);
+
+  const fileInputRef = useRef(null);
 
   const handleSend = (e) => {
     e.preventDefault();
+
     if (!text.trim() && !image) return;
 
     onSendMessage(text.trim(), image, replyTo);
+
     setText("");
     setImage(null);
-    if (onCancelReply) onCancelReply();
+    setShowEmoji(false);
+
+    if (fileInputRef.current) {
+      fileInputRef.current.value = "";
+    }
+
+    onCancelReply?.();
   };
 
-  const handleImageChange = (e) => {
-    const file = e.target.files[0];
-    if (file) {
-      const reader = new FileReader();
-      reader.onloadend = () => setImage(reader.result);
-      reader.readAsDataURL(file);
+  const handleKeyDown = (e) => {
+    if (e.key === "Enter" && !e.shiftKey) {
+      e.preventDefault();
+      handleSend(e);
     }
   };
 
-  return (
-    <div style={{ borderTop: "1px solid #ddd", padding: 12, background: "#fff" }}>
-      {replyTo && (
-        <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12, background: "#f0f0f0", padding: 6, marginBottom: 8, borderRadius: 4 }}>
-          <span>Đang trả lời <strong>{replyTo.sender}</strong>: {replyTo.text}</span>
-          <button onClick={onCancelReply} style={{ border: "none", background: "none", cursor: "pointer" }}>✕</button>
-        </div>
-      )}
+  const handleImageChange = (e) => {
+    const file = e.target.files?.[0];
 
-      {image && (
-        <div style={{ position: "relative", display: "inline-block", marginBottom: 8 }}>
-          <img src={image} alt="preview" style={{ height: 60, borderRadius: 4 }} />
+    if (!file) return;
+
+    if (!file.type.startsWith("image/")) {
+      alert("Vui lòng chọn file hình ảnh.");
+      e.target.value = "";
+      return;
+    }
+
+    if (file.size > 5 * 1024 * 1024) {
+      alert("Ảnh không được vượt quá 5MB.");
+      e.target.value = "";
+      return;
+    }
+
+    const reader = new FileReader();
+
+    reader.onloadend = () => {
+      setImage(reader.result);
+    };
+
+    reader.readAsDataURL(file);
+  };
+
+  return (
+    <div className="message-input-container">
+      {replyTo && (
+        <div className="reply-preview">
+          <div>
+            <strong>Đang trả lời {replyTo.sender}</strong>
+            <p>{replyTo.text || "Hình ảnh"}</p>
+          </div>
+
           <button
-            onClick={() => setImage(null)}
-            style={{ position: "absolute", top: -5, right: -5, background: "red", color: "white", borderRadius: "50%", border: "none", width: 20, height: 20, cursor: "pointer" }}
+            type="button"
+            onClick={onCancelReply}
+            className="cancel-reply-btn"
           >
             ✕
           </button>
         </div>
       )}
 
-      <form onSubmit={handleSend} style={{ display: "flex", gap: 8, alignItems: "center" }}>
+      {image && (
+        <div className="image-preview">
+          <img src={image} alt="Ảnh xem trước" />
+
+          <button
+            type="button"
+            onClick={() => {
+              setImage(null);
+              if (fileInputRef.current) {
+                fileInputRef.current.value = "";
+              }
+            }}
+          >
+            ✕
+          </button>
+        </div>
+      )}
+
+      {showEmoji && (
+        <div className="emoji-picker-container">
+          <EmojiPicker
+            onEmojiClick={(emojiData) => {
+              setText((prev) => prev + emojiData.emoji);
+            }}
+          />
+        </div>
+      )}
+
+      <form className="message-input-form" onSubmit={handleSend}>
         <input
+          ref={fileInputRef}
           type="file"
           accept="image/*"
-          id="chat-image-input"
-          style={{ display: "none" }}
+          hidden
           onChange={handleImageChange}
         />
-        <label htmlFor="chat-image-input" style={{ cursor: "pointer", padding: "8px 12px", background: "#f3f4f6", borderRadius: 4 }}>
-          📷
-        </label>
-        <input
-          type="text"
+
+        <button
+          type="button"
+          className="input-tool-btn"
+          title="Chọn ảnh"
+          onClick={() => fileInputRef.current?.click()}
+        >
+          📎
+        </button>
+
+        <button
+          type="button"
+          className="input-tool-btn"
+          title="Chọn emoji"
+          onClick={() => setShowEmoji((prev) => !prev)}
+        >
+          😊
+        </button>
+
+        <textarea
+          className="message-textarea"
           placeholder="Nhập tin nhắn..."
           value={text}
           onChange={(e) => setText(e.target.value)}
-          style={{ flex: 1, padding: 10, borderRadius: 4, border: "1px solid #ccc" }}
+          onKeyDown={handleKeyDown}
+          rows={1}
         />
-        <button type="submit" style={{ padding: "10px 20px", background: "#4f46e5", color: "white", border: "none", borderRadius: 4, cursor: "pointer" }}>
+
+        <button
+          type="submit"
+          className="message-send-btn"
+          disabled={!text.trim() && !image}
+        >
           Gửi
         </button>
       </form>
