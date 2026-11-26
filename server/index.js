@@ -10,7 +10,7 @@ const express = require("express");
 const cors = require("cors");
 const { Server } = require("socket.io");
 
-const { connectDatabase } = require("./src/config/database");
+const { connectDatabase, isDatabaseConnected } = require("./src/config/database");
 const masterRouter = require("./src/routes");
 const { initSocketServer } = require("./src/sockets");
 
@@ -31,7 +31,11 @@ app.use("/api", masterRouter);
 
 // Endpoint kiểm tra sức khỏe server (Health check)
 app.get("/health", (req, res) => {
-  res.json({ status: "OK", timestamp: new Date() });
+  res.json({
+    status: "OK",
+    database: isDatabaseConnected() ? "connected" : "disconnected",
+    timestamp: new Date(),
+  });
 });
 
 // 4. Khởi tạo HTTP server & Socket.IO
